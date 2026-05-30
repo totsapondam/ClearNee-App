@@ -120,12 +120,13 @@
         </section>
 
         <!-- Bills & Debts Section -->
-        <section>
+        <section class="pb-10">
             <div class="flex justify-between items-center mb-3 px-1">
                 <h2 class="text-sm font-bold text-slate-200">บิลและหนี้สินที่รอจ่าย</h2>
                 <button onclick="switchTab('transactions')" class="text-xs text-[#10b981] font-medium">ดูประวัติ</button>
             </div>
-            <div class="bg-[#1e293b] rounded-3xl p-2 shadow-lg border border-[#334155]">
+            <!-- เพิ่ม max-h และ overflow-y-auto ตรงนี้ -->
+            <div class="bg-[#1e293b] rounded-3xl p-2 shadow-lg border border-[#334155] max-h-[50vh] overflow-y-auto scrollbar-hide">
                 <div id="billsContainer" class="flex flex-col"></div>
             </div>
         </section>
@@ -700,7 +701,7 @@
 
             if(displayBills.length === 0) return c.innerHTML = '<div class="text-center py-4 text-slate-500 text-sm">ไม่มีบิลในเดือนนี้</div>';
             
-            c.innerHTML = displayBills.slice(0, 8).map((b, i) => {
+            c.innerHTML = displayBills.map((b, i) => {
                 let cardCycleHtml = '';
                 const isCredit = ['credit', 'bnpl'].includes(b.category);
                 const isPaid = b.paid && !isCredit;
@@ -736,7 +737,7 @@
                 }
 
                 return `
-                <div class="flex flex-col p-3 ${i<7?'border-b border-slate-700/50':''}">
+                <div class="flex flex-col p-3 ${i < displayBills.length - 1 ? 'border-b border-slate-700/50' : ''}">
                     <div class="flex items-start gap-3">
                         <div onclick="togglePaid('${b.id}')" class="cursor-pointer shrink-0 mt-0.5 relative transition-transform active:scale-90">
                             <div class="w-10 h-10 rounded-full flex items-center justify-center bg-[#0f172a]">
@@ -866,6 +867,26 @@
                 </div>`;
             }).join('');
             updateSummary();
+        };
+
+        const processRecurringBills = async function() {
+            const now = new Date(); const currentMonthStr = `${now.getFullYear()}-${now.getMonth()+1}`; let changed = false;
+            for (let b of bills) {
+                if (b.isRecurring && b.paid && (!b.paymentMethod || b.paymentMethod === 'cash')) {
+                    const dueDate = new Date(b.dueDate); const billMonthStr = `${dueDate.getFullYear()}-${dueDate.getMonth()+1}`;
+                    if (billMonthStr !== currentMonthStr) {
+                        const newDueDate = new Date(dueDate); newDueDate.setMonth(newDueDate.getMonth() + 1);
+                        const exists = bills.find(x => x.name === b.name && x.amount === b.amount && new Date(x.dueDate).getTime() === newDueDate.getTime());
+                        if (!exists) {
+                            const newBillId = Date.now().toString() + Math.random().toString(36).substr(2, 5);
+                            const newBill = { ...b, id: newBillId, paid: false, dueDate: newDueDate.toISOString().split('T')[0], createdAt: new Date().toISOString() };
+                            if(newBill.remainingInstallments > 0) newBill.remainingInstallments -= 1;
+                            if (userId) { try { await setDoc(doc(db, 'users', userId, 'bills', newBillId), newBill); } catch(e) {} } else { bills.push(newBill); changed = true; }
+                        }
+                    }
+                }
+            }
+            if (changed && !userId) saveData();
         };
 
         const calculatePlan = function() { bills.sort((a, b) => a.paid - b.paid || new Date(a.dueDate) - new Date(b.dueDate)); renderBillsHome(); if(!document.getElementById('tab-transactions').classList.contains('hidden')) renderAllTransactions(); if(!document.getElementById('tab-budget').classList.contains('hidden')) renderBudgetStats(); };
@@ -1391,7 +1412,7 @@
 
                 if(unsubIncomes) unsubIncomes(); if(unsubBills) unsubBills(); if(unsubSettings) unsubSettings(); if(unsubGoals) unsubGoals();
                 unsubIncomes = onSnapshot(collection(db, 'users', userId, 'incomes'), (snapshot) => { incomes = []; snapshot.forEach(doc => incomes.push({ id: doc.id, ...doc.data() })); renderAll(); });
-                unsubBills = onSnapshot(collection(db, 'users', userId, 'bills'), (snapshot) => { bills = []; snapshot.forEach(doc => bills.push({ id: doc.id, ...doc.data() })); renderAll(); });
+                unsubBills = onSnapshot(collection(db, 'users', userId, 'bills'), (snapshot) => { bills = []; snapshot.forEach(doc => bills.push({ id: doc.id, ...doc.data() })); processRecurringBills(); renderAll(); });
                 unsubGoals = onSnapshot(collection(db, 'users', userId, 'goals'), (snapshot) => { savingsGoals = []; snapshot.forEach(doc => savingsGoals.push({ id: doc.id, ...doc.data() })); renderAll(); });
                 unsubSettings = onSnapshot(doc(db, 'users', userId, 'settings', 'tags'), (docSnap) => { if (docSnap.exists()) quickTagsData = docSnap.data(); const catSheet = document.getElementById('categorySheet'); if(catSheet && catSheet.classList.contains('open')) window.renderCategoryManager(); });
             } else {
@@ -1407,7 +1428,7 @@
                 bills = JSON.parse(localStorage.getItem('clearNeeBills')) || []; 
                 savingsGoals = JSON.parse(localStorage.getItem('clearNeeGoals')) || []; 
                 quickTagsData = JSON.parse(localStorage.getItem('clearNeeQuickTags')) || defaultQuickTags;
-                renderAll();
+                processRecurringBills(); renderAll();
             }
         });
 
@@ -1491,6 +1512,33 @@
                     } catch(error) { await window.showCustomDialog({ type: 'alert', title: 'ผิดพลาด', message: 'เกิดข้อผิดพลาดในการบันทึก', icon: 'fa-circle-xmark', color: 'rose' }); }
 
                     setTimeout(() => { this.reset(); document.getElementById('billDueDate').valueAsDate = new Date(); window.closeAllModals(); btn.innerHTML = orig; btn.disabled = false; }, 300);
+                });
+            }
+
+            const authForm = document.getElementById('authForm');
+            if (authForm) {
+                authForm.addEventListener('submit', async function(e) {
+                    e.preventDefault(); const email = document.getElementById('authEmail').value; const pass = document.getElementById('authPassword').value; const btn = document.getElementById('authSubmitBtn'); const origHTML = btn.innerHTML;
+                    btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> กำลังดำเนินการ...'; btn.disabled = true;
+                    try {
+                        if (authModeState === 'login') await signInWithEmailAndPassword(auth, email, pass); else await createUserWithEmailAndPassword(auth, email, pass);
+                        btn.innerHTML = '<i class="fa-solid fa-check"></i> สำเร็จ!'; btn.classList.add('from-emerald-500', 'to-emerald-400');
+                        setTimeout(() => { window.closeAllModals(); this.reset(); btn.innerHTML = origHTML; btn.disabled = false; btn.classList.remove('from-emerald-500', 'to-emerald-400'); }, 1000);
+                    } catch(error) {
+                        console.error("Firebase Auth Error: ", error);
+                        let errorMsg = 'เกิดข้อผิดพลาด';
+                        
+                        if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') errorMsg = 'ไม่พบบัญชีนี้ หรือรหัสผ่านไม่ถูกต้อง';
+                        else if (error.code === 'auth/email-already-in-use') errorMsg = 'อีเมลนี้ถูกใช้งานแล้ว';
+                        else if (error.code === 'auth/weak-password') errorMsg = 'รหัสผ่าน 6 ตัวอักษรขึ้นไป';
+                        else if (error.code === 'auth/unauthorized-domain') errorMsg = 'โดเมนของคุณยังไม่ได้รับอนุญาตใน Firebase';
+                        else if (error.code === 'auth/operation-not-allowed') errorMsg = 'ยังไม่ได้เปิดใช้งาน Email Auth ใน Firebase';
+                        else errorMsg = `Error: ${error.code}`; // แจ้งโค้ดตรงๆ ถ้าไม่ใช่ด้านบน
+
+                        btn.innerHTML = errorMsg; 
+                        btn.classList.add('from-rose-500', 'to-red-500', 'text-[11px]');
+                        setTimeout(() => { btn.innerHTML = origHTML; btn.disabled = false; btn.classList.remove('from-rose-500', 'to-red-500', 'text-[11px]'); }, 4000);
+                    }
                 });
             }
         });
