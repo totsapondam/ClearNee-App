@@ -674,7 +674,7 @@
             let minCreditPaymentsThisMonth = bills.filter(b => ['credit', 'bnpl'].includes(b.category)).reduce((sum, b) => {
                 let sDay = b.statementDay || 1; let lastStatementDate = new Date(now.getFullYear(), now.getMonth(), sDay);
                 if (now.getDate() < sDay) lastStatementDate.setMonth(lastStatementDate.getMonth() - 1);
-                let unbilled = bills.filter(exp => exp.paymentMethod === b.id && new Date(exp.dueDate) > lastStatementDate).reduce((s, exp) => s + exp.amount, 0);
+                let unbilled = bills.filter(exp => String(exp.paymentMethod) === String(b.id) && new Date(exp.dueDate) > lastStatementDate).reduce((s, exp) => s + exp.amount, 0);
                 return sum + Math.max(0, (b.totalDebt || 0) - unbilled);
             }, 0);
             let totalPendingThisMonth = pendingThisMonth + minCreditPaymentsThisMonth;
@@ -689,18 +689,28 @@
 
         const renderBillsHome = function() {
             const c = document.getElementById('billsContainer'); if (!c) return;
-            const pendingBills = bills.filter(b => !b.paid || ['credit', 'bnpl'].includes(b.category)); 
-
-            if(pendingBills.length === 0) return c.innerHTML = '<div class="text-center py-4 text-slate-500 text-sm">ไม่มีบิลที่รอจ่าย</div>';
             
-            c.innerHTML = pendingBills.slice(0, 5).map((b, i) => {
+            const now = new Date();
+            const displayBills = bills.filter(b => {
+                if (['credit', 'bnpl'].includes(b.category)) return true;
+                if (!b.paid) return true;
+                const d = new Date(b.dueDate);
+                return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+            });
+
+            if(displayBills.length === 0) return c.innerHTML = '<div class="text-center py-4 text-slate-500 text-sm">ไม่มีบิลในเดือนนี้</div>';
+            
+            c.innerHTML = displayBills.slice(0, 8).map((b, i) => {
                 let cardCycleHtml = '';
-                if (['credit', 'bnpl'].includes(b.category)) {
+                const isCredit = ['credit', 'bnpl'].includes(b.category);
+                const isPaid = b.paid && !isCredit;
+
+                if (isCredit) {
                     let sDay = b.statementDay || 1; let dDay = b.dueDay || 1; const now = new Date();
                     let lastStatementDate = new Date(now.getFullYear(), now.getMonth(), sDay);
                     if (now.getDate() < sDay) { lastStatementDate.setMonth(lastStatementDate.getMonth() - 1); }
 
-                    let unbilledExpenses = bills.filter(exp => exp.paymentMethod === b.id && new Date(exp.dueDate) > lastStatementDate).reduce((sum, exp) => sum + exp.amount, 0);
+                    let unbilledExpenses = bills.filter(exp => String(exp.paymentMethod) === String(b.id) && new Date(exp.dueDate) > lastStatementDate).reduce((sum, exp) => sum + exp.amount, 0);
                     let totalOwed = b.totalDebt || 0; let billedAmount = Math.max(0, totalOwed - unbilledExpenses); let unbilledAmount = Math.max(0, Math.min(totalOwed, unbilledExpenses));
 
                     let dueMonth = lastStatementDate.getMonth() + (dDay <= sDay ? 1 : 0);
@@ -725,28 +735,32 @@
                     `;
                 }
 
-                // FIX: Removed truncate, used line-clamp/break-words, aligned items-start
                 return `
-                <div class="flex flex-col p-3 ${i<4?'border-b border-slate-700/50':''}">
+                <div class="flex flex-col p-3 ${i<7?'border-b border-slate-700/50':''}">
                     <div class="flex items-start gap-3">
-                        <div onclick="togglePaid('${b.id}')" class="cursor-pointer shrink-0 mt-0.5"><div class="w-10 h-10 rounded-full flex items-center justify-center bg-[#0f172a]"><i class="fa-solid ${b.iconClass}"></i></div></div>
+                        <div onclick="togglePaid('${b.id}')" class="cursor-pointer shrink-0 mt-0.5 relative transition-transform active:scale-90">
+                            <div class="w-10 h-10 rounded-full flex items-center justify-center bg-[#0f172a]">
+                                <i class="fa-solid ${b.iconClass} ${isPaid ? 'opacity-50' : ''}"></i>
+                            </div>
+                            ${isPaid ? '<div class="absolute -top-1 -right-1 w-4 h-4 bg-emerald-500 rounded-full border-2 border-[#1e293b] flex items-center justify-center shadow-sm"><i class="fa-solid fa-check text-[8px] text-white"></i></div>' : ''}
+                        </div>
                         <div class="flex-1 min-w-0 pr-1">
                             <div class="flex flex-wrap items-center gap-1.5 mb-1">
-                                <h3 class="font-bold text-slate-100 text-[15px] leading-tight break-words">${b.name}</h3>
-                                ${b.isRecurring ? '<i class="fa-solid fa-rotate text-blue-400 text-[10px]" title="รายการประจำ"></i>' : ''}
+                                <h3 class="font-bold ${isPaid ? 'text-slate-400 line-through' : 'text-slate-100'} text-[15px] leading-tight break-words">${b.name}</h3>
+                                ${b.isRecurring ? `<i class="fa-solid fa-rotate ${isPaid ? 'text-blue-500/50' : 'text-blue-400'} text-[10px]" title="รายการประจำ"></i>` : ''}
                                 ${b.interestRate > 0 ? `<span class="px-1.5 py-0.5 bg-rose-500/20 text-rose-400 text-[8px] rounded font-bold whitespace-nowrap">${b.interestRate}%${['credit', 'bnpl', 'informal_debt'].includes(b.category) ? '/ด.' : '/ปี'}</span>` : ''}
                             </div>
-                            ${['credit', 'bnpl'].includes(b.category) ? '' : `<p class="text-xs text-slate-400">${new Date(b.dueDate).toLocaleDateString('th-TH')}</p>`}
+                            ${isCredit ? '' : `<p class="text-xs ${isPaid ? 'text-emerald-500 font-medium' : 'text-slate-400'}">${isPaid ? '<i class="fa-solid fa-circle-check mr-1"></i>จ่ายแล้ว' : new Date(b.dueDate).toLocaleDateString('th-TH')}</p>`}
                             ${b.remainingInstallments > 0 ? `<p class="text-[10px] text-blue-400 mt-0.5">เหลืองวด: ${b.remainingInstallments} งวด</p>` : ''}
-                            ${['credit', 'bnpl'].includes(b.category) ? `<p class="text-[10px] text-slate-400 mt-0.5">ยอดหนี้รวม: ฿${formatMoney(b.totalDebt || 0).replace('฿','')}</p>` : ''}
+                            ${isCredit ? `<p class="text-[10px] text-slate-400 mt-0.5">ยอดหนี้รวม: ฿${formatMoney(b.totalDebt || 0).replace('฿','')}</p>` : ''}
                         </div>
                         <div class="text-right shrink-0">
                             <div class="flex items-center justify-end gap-1">
-                                <p class="font-bold text-rose-400">฿${formatMoney(['credit', 'bnpl'].includes(b.category) ? b.totalDebt : b.amount).replace('฿','')}</p>
-                                <button onclick="editBillAmount('${b.id}')" class="text-slate-400 hover:text-blue-400 p-1"><i class="fa-solid fa-pen-to-square"></i></button>
+                                <p class="font-bold ${isPaid ? 'text-slate-500' : 'text-rose-400'}">฿${formatMoney(isCredit ? b.totalDebt : b.amount).replace('฿','')}</p>
+                                ${!isPaid ? `<button onclick="editBillAmount('${b.id}')" class="text-slate-400 hover:text-blue-400 p-1"><i class="fa-solid fa-pen-to-square"></i></button>` : ''}
                             </div>
-                            ${['credit', 'bnpl'].includes(b.category) && b.creditLimit > 0 ? `<p class="text-[10px] text-emerald-400 mt-0.5">เหลือวงเงิน: ${formatMoney(b.creditLimit - (b.totalDebt || 0)).replace('฿','')}</p>` : ''}
-                            ${!['credit', 'bnpl'].includes(b.category) && b.totalDebt > 0 ? `<p class="text-[10px] text-slate-500 mt-0.5">ยอดหนี้รวม: ${formatMoney(b.totalDebt).replace('฿','')}</p>` : ''}
+                            ${isCredit && b.creditLimit > 0 ? `<p class="text-[10px] text-emerald-400 mt-0.5">เหลือวงเงิน: ${formatMoney(b.creditLimit - (b.totalDebt || 0)).replace('฿','')}</p>` : ''}
+                            ${!isCredit && b.totalDebt > 0 ? `<p class="text-[10px] text-slate-500 mt-0.5">ยอดหนี้รวม: ${formatMoney(b.totalDebt).replace('฿','')}</p>` : ''}
                         </div>
                         <div class="shrink-0 ml-2 mt-0.5">
                             <button onclick="deleteBill('${b.id}')" class="text-rose-500 bg-rose-500/10 w-7 h-7 rounded-md flex items-center justify-center"><i class="fa-solid fa-trash-can text-xs"></i></button>
@@ -764,9 +778,8 @@
             if(all.length === 0) return c.innerHTML = '<div class="text-center py-10 text-slate-500">ไม่มีประวัติ</div>';
             c.innerHTML = all.map(t => {
                 let isCardCharge = t.type === 'out' && t.paymentMethod && t.paymentMethod !== 'cash';
-                let cardName = ""; if (isCardCharge) { let card = bills.find(b => b.id === t.paymentMethod); cardName = card ? card.name : "บัตรเครดิต"; }
+                let cardName = ""; if (isCardCharge) { let card = bills.find(b => String(b.id) === String(t.paymentMethod)); cardName = card ? card.name : "บัตรเครดิต"; }
                 
-                // FIX: Removed truncate, adjusted flex alignment
                 return `
                 <div class="flex items-start gap-3 p-3 border-b border-slate-700/50">
                     <div class="w-10 h-10 mt-0.5 rounded-full shrink-0 flex items-center justify-center ${t.type==='in'?'bg-emerald-500/20 text-emerald-400':'bg-rose-500/20 text-rose-400'}"><i class="fa-solid ${t.type==='in'?'fa-arrow-down':'fa-arrow-up'}"></i></div>
@@ -853,26 +866,6 @@
                 </div>`;
             }).join('');
             updateSummary();
-        };
-
-        const processRecurringBills = async function() {
-            const now = new Date(); const currentMonthStr = `${now.getFullYear()}-${now.getMonth()+1}`; let changed = false;
-            for (let b of bills) {
-                if (b.isRecurring && b.paid && (!b.paymentMethod || b.paymentMethod === 'cash')) {
-                    const dueDate = new Date(b.dueDate); const billMonthStr = `${dueDate.getFullYear()}-${dueDate.getMonth()+1}`;
-                    if (billMonthStr !== currentMonthStr) {
-                        const newDueDate = new Date(dueDate); newDueDate.setMonth(newDueDate.getMonth() + 1);
-                        const exists = bills.find(x => x.name === b.name && x.amount === b.amount && new Date(x.dueDate).getTime() === newDueDate.getTime());
-                        if (!exists) {
-                            const newBillId = Date.now().toString() + Math.random().toString(36).substr(2, 5);
-                            const newBill = { ...b, id: newBillId, paid: false, dueDate: newDueDate.toISOString().split('T')[0], createdAt: new Date().toISOString() };
-                            if(newBill.remainingInstallments > 0) newBill.remainingInstallments -= 1;
-                            if (userId) { try { await setDoc(doc(db, 'users', userId, 'bills', newBillId), newBill); } catch(e) {} } else { bills.push(newBill); changed = true; }
-                        }
-                    }
-                }
-            }
-            if (changed && !userId) saveData();
         };
 
         const calculatePlan = function() { bills.sort((a, b) => a.paid - b.paid || new Date(a.dueDate) - new Date(b.dueDate)); renderBillsHome(); if(!document.getElementById('tab-transactions').classList.contains('hidden')) renderAllTransactions(); if(!document.getElementById('tab-budget').classList.contains('hidden')) renderBudgetStats(); };
@@ -1009,7 +1002,7 @@
 
         window.openGoalModal = function() { document.getElementById('addGoalForm').reset(); window.openModal('goalSheet'); };
         window.openGoalActionModal = function(id) {
-            const goal = savingsGoals.find(g => g.id === id); if (!goal) return;
+            const goal = savingsGoals.find(g => String(g.id) === String(id)); if (!goal) return;
             document.getElementById('gaActiveGoalId').value = id;
             document.getElementById('gaTitle').textContent = goal.name;
             document.getElementById('gaCurrentAmount').textContent = formatMoney(goal.currentAmount || 0);
@@ -1021,10 +1014,11 @@
         };
 
         window.submitGoalAction = async function(action) {
-            const id = document.getElementById('gaActiveGoalId').value; const amount = parseFloat(document.getElementById('gaAmountInput').value);
+            const targetId = String(document.getElementById('gaActiveGoalId').value);
+            const amount = parseFloat(document.getElementById('gaAmountInput').value);
             if (isNaN(amount) || amount <= 0) return await window.showCustomDialog({ type: 'alert', title: 'ระบุยอดเงิน', message: 'กรุณาระบุจำนวนเงินที่ถูกต้อง', icon: 'fa-circle-xmark', color: 'rose' });
             
-            const idx = savingsGoals.findIndex(g => g.id === id); if (idx === -1) return;
+            const idx = savingsGoals.findIndex(g => String(g.id) === targetId); if (idx === -1) return;
             let goal = savingsGoals[idx]; let currentAmt = goal.currentAmount || 0;
 
             if (action === 'deposit') {
@@ -1039,16 +1033,16 @@
             }
 
             let updatedGoal = { ...goal, currentAmount: currentAmt };
-            if (userId) { await setDoc(doc(db, 'users', userId, 'goals', id.toString()), updatedGoal); } else { savingsGoals[idx] = updatedGoal; saveData(); }
+            if (userId) { await setDoc(doc(db, 'users', userId, 'goals', targetId), updatedGoal); } else { savingsGoals[idx] = updatedGoal; saveData(); }
             window.closeAllModals();
             if(action==='deposit' && updatedGoal.currentAmount >= updatedGoal.targetAmount) setTimeout(()=> window.showCustomDialog({ type: 'alert', title: 'ยินดีด้วย!', message: `คุณทำเป้าหมาย "${updatedGoal.name}" สำเร็จแล้ว 🎉`, icon: 'fa-star', color: 'emerald' }), 500);
         };
 
         window.deleteActiveGoal = async function() {
-            const id = document.getElementById('gaActiveGoalId').value;
+            const targetId = String(document.getElementById('gaActiveGoalId').value);
             const isConfirm = await window.showCustomDialog({ type: 'confirm', title: 'ลบเป้าหมาย', message: 'ต้องการลบเป้าหมายออมเงินนี้ทิ้งใช่หรือไม่?\n(เงินที่ออมไว้จะถูกเด้งกลับเข้ากระเป๋าเงินอัตโนมัติ)', icon: 'fa-trash', color: 'rose' });
             if (isConfirm) {
-                if (userId) { await deleteDoc(doc(db, 'users', userId, 'goals', id.toString())); } else { savingsGoals = savingsGoals.filter(g => g.id !== id); saveData(); }
+                if (userId) { await deleteDoc(doc(db, 'users', userId, 'goals', targetId)); } else { savingsGoals = savingsGoals.filter(g => String(g.id) !== targetId); saveData(); }
                 window.closeAllModals();
             }
         };
@@ -1057,7 +1051,7 @@
             if (incomes.length === 0 && bills.length === 0 && savingsGoals.length === 0) return await window.showCustomDialog({ type:'alert', title:'ไม่มีข้อมูล', message:'ยังไม่มีข้อมูลที่จะส่งออกครับ', icon:'fa-file-excel', color:'orange' });
             let csvContent = "data:text/csv;charset=utf-8,\uFEFFประเภท,หมวดหมู่/ไอคอน,ชื่อรายการ,จำนวนเงิน/ยอดปัจจุบัน,วันที่/ครบกำหนด,สถานะ,ช่องทางจ่าย,ดอกเบี้ย(%),ยอดคงค้าง,เป้าหมาย/วงเงิน/เหลืองวด\n";
             incomes.forEach(i => csvContent += `รายรับ,-,${i.name},${i.amount},${new Date(i.createdAt).toLocaleDateString('th-TH')},ได้รับแล้ว,เงินสด,-,-,-\n`);
-            bills.forEach(b => { let payMethodName = "เงินสด"; if (b.paymentMethod && b.paymentMethod !== 'cash') { let card = bills.find(c => c.id === b.paymentMethod); payMethodName = card ? `บัตร ${card.name}` : "บัตรเครดิต"; } let limitOrInst = ['credit', 'bnpl'].includes(b.category) ? b.creditLimit : b.remainingInstallments; csvContent += `รายจ่าย/หนี้สิน,${catNamesMap[b.category] || b.category},${b.name},-${b.amount},${new Date(b.dueDate).toLocaleDateString('th-TH')},${b.paid ? "จ่ายแล้ว" : "รอจ่าย"},${payMethodName},${b.interestRate||"-"},${b.totalDebt||"-"},${limitOrInst||"-"}\n`; });
+            bills.forEach(b => { let payMethodName = "เงินสด"; if (b.paymentMethod && b.paymentMethod !== 'cash') { let card = bills.find(c => String(c.id) === String(b.paymentMethod)); payMethodName = card ? `บัตร ${card.name}` : "บัตรเครดิต"; } let limitOrInst = ['credit', 'bnpl'].includes(b.category) ? b.creditLimit : b.remainingInstallments; csvContent += `รายจ่าย/หนี้สิน,${catNamesMap[b.category] || b.category},${b.name},-${b.amount},${new Date(b.dueDate).toLocaleDateString('th-TH')},${b.paid ? "จ่ายแล้ว" : "รอจ่าย"},${payMethodName},${b.interestRate||"-"},${b.totalDebt||"-"},${limitOrInst||"-"}\n`; });
             savingsGoals.forEach(g => csvContent += `เป้าหมายออมเงิน,${g.icon},${g.name},${g.currentAmount||0},${new Date(g.createdAt).toLocaleDateString('th-TH')},อยู่ระหว่างออม,-,-,-,${g.targetAmount}\n`);
             const link = document.createElement("a"); link.setAttribute("href", encodeURI(csvContent)); link.setAttribute("download", `ClearNee_Report_${new Date().toISOString().split('T')[0]}.csv`);
             document.body.appendChild(link); link.click(); document.body.removeChild(link); await window.showCustomDialog({ type:'alert', title:'สำเร็จ', message:'ส่งออกข้อมูล CSV เรียบร้อยแล้ว', icon:'fa-check-circle', color:'emerald' });
@@ -1078,7 +1072,7 @@
             bills.filter(b => ['credit', 'bnpl'].includes(b.category)).forEach(b => {
                 let sDay = b.statementDay || 1; const now = new Date(); let lastStatementDate = new Date(now.getFullYear(), now.getMonth(), sDay);
                 if (now.getDate() < sDay) lastStatementDate.setMonth(lastStatementDate.getMonth() - 1);
-                let unbilledExpenses = bills.filter(exp => exp.paymentMethod === b.id && new Date(exp.dueDate) > lastStatementDate).reduce((sum, exp) => sum + exp.amount, 0);
+                let unbilledExpenses = bills.filter(exp => String(exp.paymentMethod) === String(b.id) && new Date(exp.dueDate) > lastStatementDate).reduce((sum, exp) => sum + exp.amount, 0);
                 minCreditCardPayments += Math.max(0, (b.totalDebt || 0) - unbilledExpenses); 
             });
 
@@ -1192,6 +1186,125 @@
             }
         };
 
+        window.togglePaid = async (id) => {
+            const targetId = String(id);
+            const idx = bills.findIndex(b => String(b.id) === targetId);
+            if(idx > -1) {
+                let bill = bills[idx];
+                
+                if (['credit', 'bnpl'].includes(bill.category)) {
+                    let sDay = bill.statementDay || 1; const now = new Date();
+                    let lastStatementDate = new Date(now.getFullYear(), now.getMonth(), sDay);
+                    if (now.getDate() < sDay) lastStatementDate.setMonth(lastStatementDate.getMonth() - 1);
+                    let unbilledExpenses = bills.filter(exp => String(exp.paymentMethod) === targetId && new Date(exp.dueDate) > lastStatementDate).reduce((sum, exp) => sum + exp.amount, 0);
+                    let billedAmount = Math.max(0, (bill.totalDebt || 0) - unbilledExpenses);
+
+                    if (billedAmount <= 0) return await window.showCustomDialog({ type: 'alert', title: 'ไม่มีบิล', message: 'ไม่มีรอบบิลเรียกเก็บที่ต้องชำระในตอนนี้ครับ', icon: 'fa-check', color: 'emerald' });
+
+                    const isConfirm = await window.showCustomDialog({ type: 'confirm', title: 'ชำระบิลบัตร/สินเชื่อ', message: `ชำระบิล ${bill.name}\nยอดเรียกเก็บ: ${formatMoney(billedAmount)}\nเรียบร้อยแล้วใช่หรือไม่?`, icon: 'fa-credit-card', color: 'blue' });
+
+                    if (isConfirm) {
+                        let updatedData = { ...bill, totalDebt: Math.max(0, (bill.totalDebt || 0) - billedAmount) };
+                        if (userId) { await setDoc(doc(db, 'users', userId, 'bills', targetId), updatedData); } else { bills[idx] = updatedData; saveData(); }
+                    }
+                    return;
+                }
+
+                if (bill.paymentMethod && bill.paymentMethod !== 'cash') {
+                    return await window.showCustomDialog({ type: 'alert', title: 'เปลี่ยนสถานะไม่ได้', message: 'รายการนี้รูดผ่านบัตร (ถูกจัดเก็บเป็นหนี้บัตรแล้ว)\nหากต้องการแก้ไข กรุณาลบแล้วเพิ่มใหม่ หรือกดแก้ไขยอดเงินครับ', icon: 'fa-ban', color: 'orange' });
+                }
+
+                let isNowPaid = !bill.paid; 
+                
+                if (!isNowPaid) {
+                    const isConfirmUnpay = await window.showCustomDialog({ 
+                        type: 'confirm', 
+                        title: 'ยกเลิกสถานะ', 
+                        message: 'รายการนี้ถูกทำเครื่องหมายว่าจ่ายไปแล้ว\nต้องการยกเลิกสถานะและดึงยอดเงินกลับมาใช่หรือไม่?', 
+                        icon: 'fa-rotate-left', 
+                        color: 'orange' 
+                    });
+                    if (!isConfirmUnpay) return;
+                }
+                
+                let updatedData = { ...bill, paid: isNowPaid };
+                
+                if (['vehicle_loan', 'housing_loan', 'personal_loan', 'edu_loan', 'informal_debt'].includes(bill.category)) {
+                    if (isNowPaid) { updatedData.totalDebt = Math.max(0, (bill.totalDebt || 0) - bill.amount); if (updatedData.remainingInstallments > 0) updatedData.remainingInstallments -= 1; }
+                    else { updatedData.totalDebt = (bill.totalDebt || 0) + bill.amount; if (updatedData.remainingInstallments !== undefined) updatedData.remainingInstallments += 1; }
+                }
+
+                let newBillData = null;
+                if (isNowPaid && bill.isRecurring && !bill.nextBillGenerated) {
+                    const dueDate = new Date(bill.dueDate);
+                    const newDueDate = new Date(dueDate);
+                    newDueDate.setMonth(newDueDate.getMonth() + 1);
+
+                    updatedData.nextBillGenerated = true; 
+
+                    const exists = bills.find(x => String(x.name) === String(bill.name) && x.amount === bill.amount && new Date(x.dueDate).getTime() === newDueDate.getTime());
+                    if (!exists) {
+                        const newBillId = Date.now().toString() + Math.random().toString(36).substr(2, 5);
+                        newBillData = { ...updatedData, id: newBillId, paid: false, dueDate: newDueDate.toISOString().split('T')[0], createdAt: new Date().toISOString(), nextBillGenerated: false };
+                    }
+                }
+
+                if (userId) {
+                    await setDoc(doc(db, 'users', userId, 'bills', targetId), updatedData);
+                    if (newBillData) await setDoc(doc(db, 'users', userId, 'bills', String(newBillData.id)), newBillData);
+                } else {
+                    bills[idx] = updatedData;
+                    if (newBillData) bills.push(newBillData);
+                    saveData();
+                }
+            }
+        };
+
+        window.editBillAmount = async function(id) {
+            const targetId = String(id);
+            const idx = bills.findIndex(b => String(b.id) === targetId);
+            if (idx > -1) {
+                const bill = bills[idx]; const isCredit = ['credit', 'bnpl'].includes(bill.category);
+                const inputName = isCredit ? 'ยอดหนี้ทั้งหมด' : 'ยอดเงิน'; const defaultVal = isCredit ? (bill.totalDebt || 0) : bill.amount;
+                const newVal = await window.showCustomDialog({ type: 'prompt', title: `แก้ไข${inputName}`, message: `รายการ: ${bill.name}\nยอดเดิม: ${formatMoney(defaultVal)}\n\nระบุ${inputName}ใหม่ที่ถูกต้อง:`, icon: 'fa-pen-to-square', color: 'blue', defaultValue: defaultVal });
+                if (newVal !== null && newVal !== '') {
+                    const amount = parseFloat(newVal);
+                    if (!isNaN(amount) && amount >= 0) {
+                        let updatedData = { ...bill }; 
+                        let cardToUpdate = null;
+
+                        if (isCredit) { 
+                            updatedData.totalDebt = amount; 
+                        } else { 
+                            const diff = amount - bill.amount; 
+                            updatedData.amount = amount; 
+                            
+                            if (bill.paymentMethod && bill.paymentMethod !== 'cash') {
+                                let card = bills.find(b => String(b.id) === String(bill.paymentMethod));
+                                if (card) {
+                                    cardToUpdate = { ...card, totalDebt: Math.max(0, (card.totalDebt || 0) + diff) };
+                                }
+                            }
+                        }
+
+                        if (userId) { 
+                            await setDoc(doc(db, 'users', userId, 'bills', targetId), updatedData); 
+                            if (cardToUpdate) await setDoc(doc(db, 'users', userId, 'bills', String(cardToUpdate.id)), cardToUpdate);
+                        } else { 
+                            bills[idx] = updatedData; 
+                            if (cardToUpdate) {
+                                const cardIdx = bills.findIndex(b => String(b.id) === String(cardToUpdate.id));
+                                if (cardIdx > -1) bills[cardIdx] = cardToUpdate;
+                            }
+                            saveData(); 
+                        }
+                    } else { 
+                        await window.showCustomDialog({ type: 'alert', title: 'ผิดพลาด', message: 'กรุณาระบุตัวเลขที่ถูกต้อง', icon: 'fa-circle-xmark', color: 'rose' }); 
+                    }
+                }
+            }
+        };
+
         // Authentication and Data Binding
         let authModeState = 'login';
         window.toggleAuthMode = function(mode) {
@@ -1226,56 +1339,9 @@
         window.closeAllModals = function() { document.querySelectorAll('.bottom-sheet').forEach(s => s.classList.remove('open')); const backdrop = document.getElementById('modalBackdrop'); if (backdrop) backdrop.classList.add('opacity-0'); setTimeout(() => { if (backdrop) backdrop.classList.add('hidden'); }, 300); };
         window.quickFillIncome = (name) => { const incName = document.getElementById('incomeName'); if (incName) incName.value = name; };
         
-        window.deleteIncome = async (id) => { const isConfirm = await window.showCustomDialog({ type: 'confirm', title: 'ลบรายรับ', message: 'คุณแน่ใจหรือไม่ว่าต้องการลบรายรับนี้?', icon: 'fa-trash', color: 'rose' }); if(isConfirm) { if (userId) { await deleteDoc(doc(db, 'users', userId, 'incomes', id.toString())); } else { incomes = incomes.filter(i => i.id !== id); saveData(); } } };
-        window.deleteBill = async (id) => { const isConfirm = await window.showCustomDialog({ type: 'confirm', title: 'ลบรายการ', message: 'ต้องการลบรายการนี้ใช่หรือไม่?\n(ยอดหนี้จะถูกคืนค่ากลับด้วย)', icon: 'fa-trash', color: 'rose' }); if(isConfirm) { const billToDelete = bills.find(b => b.id === id); if (userId) { await deleteDoc(doc(db, 'users', userId, 'bills', id.toString())); if (billToDelete && billToDelete.paymentMethod && billToDelete.paymentMethod !== 'cash') { let card = bills.find(b => b.id === billToDelete.paymentMethod); if (card) await setDoc(doc(db, 'users', userId, 'bills', card.id), { ...card, totalDebt: Math.max(0, (card.totalDebt || 0) - billToDelete.amount) }); } } else { bills = bills.filter(b => b.id !== id); if (billToDelete && billToDelete.paymentMethod && billToDelete.paymentMethod !== 'cash') { let card = bills.find(b => b.id === billToDelete.paymentMethod); if (card) card.totalDebt = Math.max(0, (card.totalDebt || 0) - billToDelete.amount); } saveData(); } } };
+        window.deleteIncome = async (id) => { const targetId = String(id); const isConfirm = await window.showCustomDialog({ type: 'confirm', title: 'ลบรายรับ', message: 'คุณแน่ใจหรือไม่ว่าต้องการลบรายรับนี้?', icon: 'fa-trash', color: 'rose' }); if(isConfirm) { if (userId) { await deleteDoc(doc(db, 'users', userId, 'incomes', targetId)); } else { incomes = incomes.filter(i => String(i.id) !== targetId); saveData(); } } };
+        window.deleteBill = async (id) => { const targetId = String(id); const isConfirm = await window.showCustomDialog({ type: 'confirm', title: 'ลบรายการ', message: 'ต้องการลบรายการนี้ใช่หรือไม่?\n(ยอดหนี้จะถูกคืนค่ากลับด้วย)', icon: 'fa-trash', color: 'rose' }); if(isConfirm) { const billToDelete = bills.find(b => String(b.id) === targetId); if (userId) { await deleteDoc(doc(db, 'users', userId, 'bills', targetId)); if (billToDelete && billToDelete.paymentMethod && billToDelete.paymentMethod !== 'cash') { let card = bills.find(b => String(b.id) === String(billToDelete.paymentMethod)); if (card) await setDoc(doc(db, 'users', userId, 'bills', String(card.id)), { ...card, totalDebt: Math.max(0, (card.totalDebt || 0) - billToDelete.amount) }); } } else { bills = bills.filter(b => String(b.id) !== targetId); if (billToDelete && billToDelete.paymentMethod && billToDelete.paymentMethod !== 'cash') { let card = bills.find(b => String(b.id) === String(billToDelete.paymentMethod)); if (card) card.totalDebt = Math.max(0, (card.totalDebt || 0) - billToDelete.amount); } saveData(); } } };
         
-        window.togglePaid = async (id) => {
-            const idx = bills.findIndex(b => b.id === id);
-            if(idx > -1) { 
-                let bill = bills[idx]; 
-                if (['credit', 'bnpl'].includes(bill.category)) {
-                    let sDay = bill.statementDay || 1; const now = new Date();
-                    let lastStatementDate = new Date(now.getFullYear(), now.getMonth(), sDay);
-                    if (now.getDate() < sDay) lastStatementDate.setMonth(lastStatementDate.getMonth() - 1);
-                    let unbilledExpenses = bills.filter(exp => exp.paymentMethod === bill.id && new Date(exp.dueDate) > lastStatementDate).reduce((sum, exp) => sum + exp.amount, 0);
-                    let billedAmount = Math.max(0, (bill.totalDebt || 0) - unbilledExpenses);
-
-                    if (billedAmount <= 0) return await window.showCustomDialog({ type: 'alert', title: 'ไม่มีบิล', message: 'ไม่มีรอบบิลเรียกเก็บที่ต้องชำระในตอนนี้ครับ', icon: 'fa-check', color: 'emerald' });
-
-                    const isConfirm = await window.showCustomDialog({ type: 'confirm', title: 'ชำระบิลบัตร/สินเชื่อ', message: `ชำระบิล ${bill.name}\nยอดเรียกเก็บ: ${formatMoney(billedAmount)}\nเรียบร้อยแล้วใช่หรือไม่?`, icon: 'fa-credit-card', color: 'blue' });
-                    
-                    if (isConfirm) {
-                        let updatedData = { ...bill, totalDebt: Math.max(0, (bill.totalDebt || 0) - billedAmount) };
-                        if (userId) { await setDoc(doc(db, 'users', userId, 'bills', id.toString()), updatedData); } else { bills[idx] = updatedData; saveData(); }
-                    }
-                    return;
-                }
-
-                let isNowPaid = !bill.paid; let updatedData = { ...bill, paid: isNowPaid };
-                if (['vehicle_loan', 'housing_loan', 'personal_loan', 'edu_loan', 'informal_debt'].includes(bill.category)) {
-                    if (isNowPaid) { updatedData.totalDebt = Math.max(0, (bill.totalDebt || 0) - bill.amount); if (updatedData.remainingInstallments > 0) updatedData.remainingInstallments -= 1; } 
-                    else { updatedData.totalDebt = (bill.totalDebt || 0) + bill.amount; if (updatedData.remainingInstallments !== undefined) updatedData.remainingInstallments += 1; }
-                }
-                if (userId) { await setDoc(doc(db, 'users', userId, 'bills', id.toString()), updatedData); } else { bills[idx] = updatedData; saveData(); }
-            }
-        };
-
-        window.editBillAmount = async function(id) {
-            const idx = bills.findIndex(b => b.id === id);
-            if (idx > -1) {
-                const bill = bills[idx]; const isCredit = ['credit', 'bnpl'].includes(bill.category);
-                const inputName = isCredit ? 'ยอดหนี้ทั้งหมด' : 'ยอดเงิน'; const defaultVal = isCredit ? (bill.totalDebt || 0) : bill.amount;
-                const newVal = await window.showCustomDialog({ type: 'prompt', title: `แก้ไข${inputName}`, message: `รายการ: ${bill.name}\nยอดเดิม: ${formatMoney(defaultVal)}\n\nระบุ${inputName}ใหม่ที่ถูกต้อง:`, icon: 'fa-pen-to-square', color: 'blue', defaultValue: defaultVal });
-                if (newVal !== null && newVal !== '') {
-                    const amount = parseFloat(newVal);
-                    if (!isNaN(amount) && amount >= 0) {
-                        let updatedData = { ...bill }; if (isCredit) { updatedData.totalDebt = amount; } else { updatedData.amount = amount; }
-                        if (userId) { await setDoc(doc(db, 'users', userId, 'bills', id.toString()), updatedData); } else { bills[idx] = updatedData; saveData(); }
-                    } else { await window.showCustomDialog({ type: 'alert', title: 'ผิดพลาด', message: 'กรุณาระบุตัวเลขที่ถูกต้อง', icon: 'fa-circle-xmark', color: 'rose' }); }
-                }
-            }
-        };
-
         // Initialize App & PIN system
         let currentPin = localStorage.getItem('clearNeePin') || ''; let pinInput = ''; let isSettingPin = false; let tempPinForSetup = '';
         const updatePinToggleUI = function(isActive) { const btn = document.getElementById('pinToggleBtn'); const circle = document.getElementById('pinToggleCircle'); if (!btn || !circle) return; if (isActive) { btn.classList.add('bg-[#10b981]'); btn.classList.remove('bg-slate-600'); circle.classList.add('translate-x-5'); } else { btn.classList.add('bg-slate-600'); btn.classList.remove('bg-[#10b981]'); circle.classList.remove('translate-x-5'); } };
@@ -1310,9 +1376,9 @@
                 if (localIncomes.length > 0 || localBills.length > 0 || localGoals.length > 0) {
                     if (pStat) { pStat.textContent = 'กำลังซิงค์ข้อมูล...'; pStat.classList.remove('text-slate-400'); pStat.classList.add('text-[#0ea5e9]'); }
                     try {
-                        for (const item of localIncomes) await setDoc(doc(db, 'users', userId, 'incomes', item.id.toString()), item);
-                        for (const item of localBills) await setDoc(doc(db, 'users', userId, 'bills', item.id.toString()), item);
-                        for (const item of localGoals) await setDoc(doc(db, 'users', userId, 'goals', item.id.toString()), item);
+                        for (const item of localIncomes) await setDoc(doc(db, 'users', userId, 'incomes', String(item.id)), item);
+                        for (const item of localBills) await setDoc(doc(db, 'users', userId, 'bills', String(item.id)), item);
+                        for (const item of localGoals) await setDoc(doc(db, 'users', userId, 'goals', String(item.id)), item);
                         if (localTags) await setDoc(doc(db, 'users', userId, 'settings', 'tags'), JSON.parse(localTags));
                         localStorage.removeItem('clearNeeIncomes'); localStorage.removeItem('clearNeeBills'); localStorage.removeItem('clearNeeGoals');
                     } catch (e) {}
@@ -1325,7 +1391,7 @@
 
                 if(unsubIncomes) unsubIncomes(); if(unsubBills) unsubBills(); if(unsubSettings) unsubSettings(); if(unsubGoals) unsubGoals();
                 unsubIncomes = onSnapshot(collection(db, 'users', userId, 'incomes'), (snapshot) => { incomes = []; snapshot.forEach(doc => incomes.push({ id: doc.id, ...doc.data() })); renderAll(); });
-                unsubBills = onSnapshot(collection(db, 'users', userId, 'bills'), (snapshot) => { bills = []; snapshot.forEach(doc => bills.push({ id: doc.id, ...doc.data() })); processRecurringBills(); renderAll(); });
+                unsubBills = onSnapshot(collection(db, 'users', userId, 'bills'), (snapshot) => { bills = []; snapshot.forEach(doc => bills.push({ id: doc.id, ...doc.data() })); renderAll(); });
                 unsubGoals = onSnapshot(collection(db, 'users', userId, 'goals'), (snapshot) => { savingsGoals = []; snapshot.forEach(doc => savingsGoals.push({ id: doc.id, ...doc.data() })); renderAll(); });
                 unsubSettings = onSnapshot(doc(db, 'users', userId, 'settings', 'tags'), (docSnap) => { if (docSnap.exists()) quickTagsData = docSnap.data(); const catSheet = document.getElementById('categorySheet'); if(catSheet && catSheet.classList.contains('open')) window.renderCategoryManager(); });
             } else {
@@ -1341,7 +1407,7 @@
                 bills = JSON.parse(localStorage.getItem('clearNeeBills')) || []; 
                 savingsGoals = JSON.parse(localStorage.getItem('clearNeeGoals')) || []; 
                 quickTagsData = JSON.parse(localStorage.getItem('clearNeeQuickTags')) || defaultQuickTags;
-                processRecurringBills(); renderAll();
+                renderAll();
             }
         });
 
@@ -1416,35 +1482,15 @@
                     try {
                         if (userId) { 
                             await setDoc(doc(db, 'users', userId, 'bills', id), data); 
-                            if (isCardCharge) { let card = bills.find(b => b.id === paymentMethod); if (card) { await setDoc(doc(db, 'users', userId, 'bills', card.id), { ...card, totalDebt: (card.totalDebt || 0) + amount }); } }
+                            if (isCardCharge) { let card = bills.find(b => String(b.id) === String(paymentMethod)); if (card) { await setDoc(doc(db, 'users', userId, 'bills', String(card.id)), { ...card, totalDebt: (card.totalDebt || 0) + amount }); } }
                         } else { 
                             bills.push({ id, ...data }); 
-                            if (isCardCharge) { let card = bills.find(b => b.id === paymentMethod); if (card) card.totalDebt = (card.totalDebt || 0) + amount; }
+                            if (isCardCharge) { let card = bills.find(b => String(b.id) === String(paymentMethod)); if (card) card.totalDebt = (card.totalDebt || 0) + amount; }
                             saveData(); 
                         }
                     } catch(error) { await window.showCustomDialog({ type: 'alert', title: 'ผิดพลาด', message: 'เกิดข้อผิดพลาดในการบันทึก', icon: 'fa-circle-xmark', color: 'rose' }); }
 
                     setTimeout(() => { this.reset(); document.getElementById('billDueDate').valueAsDate = new Date(); window.closeAllModals(); btn.innerHTML = orig; btn.disabled = false; }, 300);
-                });
-            }
-
-            const authForm = document.getElementById('authForm');
-            if (authForm) {
-                authForm.addEventListener('submit', async function(e) {
-                    e.preventDefault(); const email = document.getElementById('authEmail').value; const pass = document.getElementById('authPassword').value; const btn = document.getElementById('authSubmitBtn'); const origHTML = btn.innerHTML;
-                    btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> กำลังดำเนินการ...'; btn.disabled = true;
-                    try {
-                        if (authModeState === 'login') await signInWithEmailAndPassword(auth, email, pass); else await createUserWithEmailAndPassword(auth, email, pass);
-                        btn.innerHTML = '<i class="fa-solid fa-check"></i> สำเร็จ!'; btn.classList.add('from-emerald-500', 'to-emerald-400');
-                        setTimeout(() => { window.closeAllModals(); this.reset(); btn.innerHTML = origHTML; btn.disabled = false; btn.classList.remove('from-emerald-500', 'to-emerald-400'); }, 1000);
-                    } catch(error) {
-                        let errorMsg = 'เกิดข้อผิดพลาด';
-                        if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') errorMsg = 'ไม่พบบัญชีนี้ หรือรหัสผ่านไม่ถูกต้อง';
-                        else if (error.code === 'auth/email-already-in-use') errorMsg = 'อีเมลนี้ถูกใช้งานแล้ว';
-                        else if (error.code === 'auth/weak-password') errorMsg = 'รหัสผ่าน 6 ตัวอักษรขึ้นไป';
-                        btn.innerHTML = errorMsg; btn.classList.add('from-rose-500', 'to-red-500');
-                        setTimeout(() => { btn.innerHTML = origHTML; btn.disabled = false; btn.classList.remove('from-rose-500', 'to-red-500'); }, 2500);
-                    }
                 });
             }
         });
